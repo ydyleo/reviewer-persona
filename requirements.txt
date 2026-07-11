@@ -1,0 +1,7 @@
+# code-review skill 运行依赖
+# Python 脚本只做确定性数据处理，不直接调用外部 LLM API，故不含 openai/anthropic/dashscope 等 SDK。
+pandas
+openpyxl
+requests
+urllib3
+playwright

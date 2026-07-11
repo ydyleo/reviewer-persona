@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local outputs and cache (锚定 skill 根目录，可能含真实代码/敏感信息)
+outputs/
+cache/
+
+# Sensitive auth/session files
+.env
+ajimide_auth.json
+playwright_profile_ajimide/
+storage_state.json
+*.cookie
+*.cookies
+
+# Legacy 旧目录：archive-only、非运行依赖，含真实员工 PII 与评审数据，整目录不上传
+legacy/
+
+# personas/：真实 persona 含员工 PII，按名忽略；仅保留脱敏合成演示 persona
+personas/*
+!personas/reviewer-张示例-z00000001.skill.md
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 注意：不要用全局 *.xlsx / *.jsonl 规则，否则会挡掉 examples/ 下的脱敏样例。
+# examples/ 里的样例必须确认无真实代码、token、cookie、员工敏感信息。
