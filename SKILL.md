@@ -16,6 +16,7 @@ origin: local
 /code-review review         # 用指定人格评审单个 commit
 /code-review list-personas  # 列出已有 persona
 /code-review refresh-persona  # 基于新时间范围刷新 persona（备份旧版后覆盖）
+/code-review benchmark      # persona 质量评估：AI 评审 vs 真人评论，人工四分类算召回/精度/风格
 ```
 
 ## 关键约定
@@ -182,6 +183,75 @@ python <SKILL_ROOT>/scripts/review/load_persona.py --list
 
 ---
 
+## 命令五：/code-review benchmark
+
+评估 persona 蒸馏质量：拿该评审人**真实评审过的 MR**，让 persona 生成 AI 评审，
+与真人评论对照，人工填四分类算召回/精度/风格。
+
+### 为什么按 MR 而不是 commit
+
+review 走 `--commit`，但真人评论挂在 MR 上、enriched 没存 commit_id——两者键对不上。
+benchmark 的解法是**按 `mr_iid` 对齐**：AI 评该 MR 自己的 diff（`get_mr_diff` 已能取，
+= 真人当时评的那份），真人评论也在 enriched 里按 `mr_iid` 取，两边同键同 diff，行号天然对齐，
+避开走 `merge_commit_sha` 的 squash/rebase diff 不一致噪声。
+
+### 参数
+
+```
+# ① 列候选 MR（纯本地读 enriched，不需内网/token）
+/code-review benchmark --reviewer-w3 <工号>
+
+# ② 选一个 MR，出对照包 + AI 报告
+#    project_path 不用打；persona 一律取 --reviewer-w3 同人（验证的就是本人复现本人）
+/code-review benchmark --reviewer-w3 <工号> --pick <序号> --domain <地域>
+# 或按 mr_iid
+/code-review benchmark --reviewer-w3 <工号> --mr-iid <iid> --domain <地域>
+```
+
+`--reviewer-w3` = 谁的真实评审当 ground truth（候选 MR 池 + 真人评论来自此人 enriched）。
+**persona 一律取 `--reviewer-w3` 同人**（`load_persona --w3`）——benchmark 验证的就是"本人 persona 复现本人评论"，
+用别人的 persona 评此人的真实评论是在比两个评审人的观点差异，与 persona 蒸馏质量无关，不做。
+
+### 执行流程
+
+**Step 1 列候选 MR**（确定性，脚本）
+```bash
+python <SKILL_ROOT>/scripts/benchmark/collect_benchmark_pairs.py \
+  --reviewer-w3 <工号> --list
+```
+从 `outputs/enriched/*.jsonl` 按 `mr_iid` 聚合该评审人的 matched 评论，
+输出 序号 | project_path/mr_iid | 真人评论数 | 严重程度（按评论数降序）。
+候选集 = 有 ground truth 的 MR。
+
+**Step 2 出对照包**（确定性，脚本）
+```bash
+python <SKILL_ROOT>/scripts/benchmark/collect_benchmark_pairs.py \
+  --reviewer-w3 <工号> --pick <序号> --domain <地域>
+```
+- project_path 从 enriched 自动取，**用户全程不打 project_path**。
+- 按 mr_iid 从 enriched 取真人评论（file/line/severity/comment/note_hash）。
+- 调 `get_mr_diff` 取 MR diff，走与 review `--mr` 同一管线，落 `outputs/diffs/{mr_iid}_mrdiff.json`。
+- 产物：`outputs/benchmark/{mr_iid}_pair.json`（real_comments + 对 mrdiff.json 的引用，自包含真人侧）。
+
+**Step 3 生成 AI 报告**（生成，模型）
+persona 取 `--reviewer-w3` 同人（`load_persona --w3 <工号>`）。
+模型读 `outputs/diffs/{mr_iid}_mrdiff.json`（diff 已在 Step 2 拉好，**无需 project_path/domain 再拉一遍**）
++ persona 内容 + `prompts/review_with_persona_prompt.md` + `references/review-output-format.md`，
+按 persona 生成 AI 报告，落 `outputs/reports/{mr_iid}_{persona}_review.md`。
+（mrdiff.json 的 files[] 形状与 commit 模式的 `{commit}_diff.json` 一致，review 模型步骤不分来源。）
+
+**Step 4 人工对照填四分类**
+照 `templates/benchmark_worksheet.md` 把真人问题（pair.json 的 real_comments 归并）与 AI 意见逐对标
+**命中/部分命中/新发现/噪声/漏检** + 风格 1-5，底部算召回/精度。
+- 召回 = 命中真人问题数 / 真人问题总数（按问题数，不按评论数；批量评论先归并成问题）。
+- 精度 = 命中 AI 意见数 / (命中 + 部分命中 + 噪声)；新发现单独成桶不计入分母。
+- 风格 = 主观打分，自动不可靠，必须人判。
+
+一次一个 MR，从候选集采样跑 5~10 个再汇总总召回/精度/风格——这就是 persona 蒸馏质量的真信号。
+批量自动取数（`--sample N`）与模型自动匹配留 Phase 1（需先用本 Phase 0 人工标注标定）。
+
+---
+
 ## 数据链路
 
 ```
@@ -192,6 +262,7 @@ python <SKILL_ROOT>/scripts/review/load_persona.py --list
   → SKILL.md 编排模型生成 reviewer persona skill
   → 指定 persona 评审 commit
   → SKILL.md 编排模型生成 review report
+  → benchmark：按 mr_iid 取真人评论 + MR diff → AI 报告 vs 真人评论 → 人工四分类 → 召回/精度/风格
 ```
 
 ## 目录职责
@@ -200,11 +271,12 @@ python <SKILL_ROOT>/scripts/review/load_persona.py --list
 scripts/common/   公共能力（paths/config/codehub_client/diff_parser/context_builder/excel_io/jsonl_io/filters）
 scripts/distill/  生成人格链路（export_archimedes/enrich_reviews/prepare_review_data）
 scripts/review/   评审 commit 链路（get_commit_diff/load_persona）
+scripts/benchmark/  benchmark 对照链路（collect_benchmark_pairs）
 prompts/          模型提示词（distill_persona_prompt/review_with_persona_prompt）
 references/       固定规则与契约（review-output-format/rule-taxonomy/cpp-baseline）
-templates/        输出模板（persona_skill_template/review_report_template）
+templates/        输出模板（persona_skill_template/review_report_template/benchmark_worksheet）
 personas/         最终 reviewer 人格
-outputs/          运行产物（raw_archimedes/enriched/structured/diffs/generated_personas/reports）
+outputs/          运行产物（raw_archimedes/enriched/structured/diffs/generated_personas/reports/benchmark）
 cache/            缓存与登录态（mr_diffs/archimedes_session）
 legacy/           旧测试脚本，仅迁移参考，非运行依赖
 ```

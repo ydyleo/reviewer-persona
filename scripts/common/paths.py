@@ -26,6 +26,7 @@ DIFFS_DIR = OUTPUTS_DIR / "diffs"
 PROFILES_DIR = OUTPUTS_DIR / "profiles"
 GENERATED_PERSONAS_DIR = OUTPUTS_DIR / "generated_personas"
 REPORTS_DIR = OUTPUTS_DIR / "reports"
+BENCHMARK_DIR = OUTPUTS_DIR / "benchmark"
 
 # cache/ 子目录
 MR_DIFFS_CACHE_DIR = CACHE_DIR / "mr_diffs"
@@ -49,6 +50,7 @@ def ensure_dirs() -> None:
         GENERATED_PERSONAS_DIR,
         _GENERATED_PERSONAS_BACKUP_DIR,
         REPORTS_DIR,
+        BENCHMARK_DIR,
         MR_DIFFS_CACHE_DIR,
         ARCHIMEDES_SESSION_DIR,
     ):
