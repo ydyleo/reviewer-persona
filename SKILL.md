@@ -105,15 +105,28 @@ python <SKILL_ROOT>/scripts/distill/prepare_review_data.py \
 ### 执行流程
 
 **Step 1 获取 commit diff**
+
+用户未传 `--repo` 时，默认使用当前工作目录作为目标 Git 仓：
+
 ```bash
 python <SKILL_ROOT>/scripts/review/get_commit_diff.py \
-  --repo <目标仓，不传则 .> --commit <commit_id>
+  --commit <commit_id>
 ```
-- 脚本统一用 `git -C <repo>`；commit 不存在则 fetch 后复查。
+
+用户显式传入 `--repo` 时，使用指定目标仓路径：
+
+```bash
+python <SKILL_ROOT>/scripts/review/get_commit_diff.py \
+  --repo <目标仓路径> \
+  --commit <commit_id>
+```
+
+- 脚本统一用 `git -C <repo>`；未传 `--repo` 时 `<repo>` 等于当前工作目录 `.`；commit 不存在则 fetch 后复查。
 - 排除测试代码（testcode/、*_test.cpp、*_llt.cpp、LLT_*.cpp 等）。
 - 产物：`outputs/diffs/{commit}_diff.json` 和 `.md`（锚定 skill 根，不写入目标仓）。
 
 **Step 2 加载 persona**
+
 ```bash
 python <SKILL_ROOT>/scripts/review/load_persona.py --w3 <工号>
 # 或 --name <姓名>；或 --list 列出全部

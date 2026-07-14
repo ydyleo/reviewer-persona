@@ -12,6 +12,7 @@
 import argparse
 import re
 import warnings
+import time
 from pathlib import Path
 from urllib.parse import urlencode, unquote
 import sys
@@ -50,11 +51,50 @@ def parse_filename(content_disposition: str, default_name: str) -> str:
     return filename or default_name
 
 
-def login_and_save_state(page, auth_path: Path):
-    print("请在浏览器中完成登录，登录成功后按回车继续...")
-    input()
-    page.context.storage_state(path=str(auth_path))
-    print(f"登录状态已保存到 {auth_path}")
+LOGIN_TIMEOUT = 300  # 等待用户登录的超时秒数（5 分钟）
+
+
+def wait_for_login(page, auth_path: Path, target_url: str,
+                   timeout_seconds: int = LOGIN_TIMEOUT):
+    """等待用户完成登录并跳转到目标页面。
+
+    登录成功的判定信号：页面上出现「导出数据」按钮（可见且可点击）。
+    这个按钮只有登录成功 + 页面加载完毕才会出现，比检测 URL 更可靠。
+    检测到后自动保存 storage_state。
+    超时后抛出 RuntimeError，不静默跳过。
+    """
+    print("请在浏览器中完成登录，脚本将持续检测「导出数据」按钮"
+          f"（超时 {timeout_seconds} 秒）...")
+    start = time.time()
+    while time.time() - start < timeout_seconds:
+        # 1. 主动跳转到目标页面（处理登录后停在首页的情况）
+        try:
+            if target_url and page.url != target_url:
+                # 如果还在登录页就不跳，让用户继续登录
+                cur = page.url.lower()
+                if "login" not in cur and "passport" not in cur:
+                    page.goto(target_url, wait_until="domcontentloaded",
+                              timeout=30_000)
+                    page.wait_for_timeout(2000)
+        except Exception:
+            pass
+
+        # 2. 检测「导出数据」按钮
+        try:
+            btn = page.get_by_text("导出数据", exact=False)
+            if btn.count() > 0:
+                try:
+                    if btn.first.is_visible():
+                        page.context.storage_state(path=str(auth_path))
+                        print(f"检测到登录成功，登录状态已保存到 {auth_path}")
+                        return
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        time.sleep(2)
+    raise RuntimeError(
+        f"登录超时（{timeout_seconds} 秒）。请在浏览器中完成登录后重新运行本脚本。")
 
 
 def get_reviewer_name_from_excel(xlsx_path: Path, w3_account: str) -> str:
@@ -105,13 +145,14 @@ def export_review_excel(start: str, end: str, w3_account: str,
         page = context.new_page()
 
         print(f"打开页面：{page_url}")
-        page.goto(page_url, wait_until="networkidle", timeout=120_000)
+        page.goto(page_url, wait_until="domcontentloaded", timeout=60_000)
+        page.wait_for_timeout(3000)  # 等待页面 JS 完成渲染
 
         current_url = page.url
         if "login" in current_url.lower() or "passport" in current_url.lower():
             print("检测到需要登录。")
-            login_and_save_state(page, auth_path)
-            page.goto(page_url, wait_until="networkidle", timeout=120_000)
+            wait_for_login(page, auth_path, page_url)
+            # 登录成功后页面已就绪，无需重新 goto
 
         try:
             with page.expect_response(
