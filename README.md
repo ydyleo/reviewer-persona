@@ -62,9 +62,28 @@ cp .env.example .env
 /code-review review --commit <commit_id> --persona <工号>
 ```
 
-第 3 步产出 `personas/reviewer-{姓名}-{工号}.skill.md`；第 4 步产出评审报告（对话输出或落 `outputs/reports/`）。
+第 3 步产出 `personas/reviewer-{姓名}-{工号}.skill.md`；第 4 步把 diff、结构化评审和 Markdown 报告集中写入
+`outputs/review/{domain}/{project_path}/commit-{short_sha}/`。
 
 更细的参数、每步脚本、报告格式契约见 `SKILL.md`。
+
+最新产物按评审对象聚合：
+
+```text
+outputs/review/{domain}/{project_path}/commit-{short_sha}/
+├── manifest.json
+├── diff.json
+├── diff.md
+└── reviewers/{w3}/review.json|review.md
+
+outputs/benchmark/{domain}/{project_path}/mr-{iid}/reviewer-{w3}/
+├── manifest.json
+├── diff.json
+├── diff.md
+├── ground_truth.json
+├── ai_review.json|ai_review.md
+└── comparison.json|comparison.md
+```
 
 ## 主数据链路
 
@@ -91,7 +110,9 @@ cp .env.example .env          # 复制配置模板
 - 运行于华为内网，依赖与内部 CodeHub 同步的本地 git 仓。
 - 阿基米德首次运行需手动浏览器登录（不要 headless），登录态存于 `cache/archimedes_session/`，**勿提交**。
 - `outputs/`、`cache/` 均锚定 skill 根目录，已在 `.gitignore` 中忽略。
-- `/code-review review` 在目标代码仓目录执行时，报告仍写入 skill 根 `outputs/reports/`，不污染目标仓。
+- `/code-review review` 在目标代码仓目录执行时，产物仍写入 skill 根 `outputs/review/`，不污染目标仓。
+- `/code-review benchmark` 按 `{domain}/{project_path}/mr-{iid}/reviewer-{w3}/` 聚合 diff、ground truth、AI 报告与比较结果。
+- `outputs/diffs/`、`outputs/reports/` 是旧产物目录；保留历史文件，但新顶层流程不再写入。
 
 ## 目录速览
 
@@ -101,7 +122,7 @@ prompts/      模型编排提示词
 references/   固定规则与评审报告格式契约
 templates/    persona 与评审报告模板
 personas/     最终 reviewer 人格（被 review 加载）
-outputs/      运行产物（raw_archimedes/enriched/structured/diffs/generated_personas/reports/benchmark）
+outputs/      运行产物（distill 目录 + review/benchmark；diffs/reports 为旧产物）
 cache/        缓存与登录态（mr_diffs/archimedes_session）
 legacy/       旧测试脚本，仅迁移参考，非运行依赖
 ```

@@ -11,7 +11,9 @@
 - --repo 可选，不传默认当前工作目录；git 命令统一 git -C <repo>。
 - --mr 模式需要 --domain 与 --mr <project_path>/<mr_iid>。
 - 排除测试代码（testcode/、*_test.cpp、*_llt.cpp、LLT_*.cpp 等）。
-- 中间 diff 输出到 outputs/diffs/（锚定 skill 根，不写入目标仓）。
+- commit diff 默认输出到 outputs/review/{domain}/{project}/commit-{sha}/。
+- benchmark 通过 --output-dir 把 MR diff 写入该 benchmark case 目录。
+- outputs/diffs/ 仅保留给旧的直接 MR 脚本调用兼容，不再是顶层命令主路径。
 
 用法（由顶层 SKILL.md 用绝对路径调用）：
     python <SKILL_ROOT>/scripts/review/get_commit_diff.py --commit abc123
@@ -29,6 +31,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]  # code-review/scripts
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from common.artifacts import now_iso, write_json  # noqa: E402
+from common.output_layout import review_case_dir, repository_identity  # noqa: E402
 from common.paths import DIFFS_DIR, ensure_dirs  # noqa: E402
 
 # 测试代码排除（与旧 SKILL.md Step 3 一致）
@@ -130,8 +134,9 @@ def _assemble_files(files_split):
 
 
 def _write_diff_output(out_stem: str, title: str, meta_lines: list,
-                       files_split, extra_meta: dict) -> dict:
-    """装配 + 写 {out_stem}.json/.md，返回 result。commit/MR 共用。"""
+                       files_split, extra_meta: dict,
+                       output_dir: Path = None) -> dict:
+    """装配并写 diff.json/.md；无 output_dir 时保留旧命名兼容。"""
     ensure_dirs()
     kept, excluded = _assemble_files(files_split)
     result = {
@@ -141,10 +146,15 @@ def _write_diff_output(out_stem: str, title: str, meta_lines: list,
         'excluded_test_files': excluded,
         'files': kept,
     }
-    json_out = DIFFS_DIR / f'{out_stem}.json'
-    md_out = DIFFS_DIR / f'{out_stem}.md'
-    with open(json_out, 'w', encoding='utf-8') as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
+    if output_dir is None:
+        json_out = DIFFS_DIR / f'{out_stem}.json'
+        md_out = DIFFS_DIR / f'{out_stem}.md'
+    else:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        json_out = output_dir / 'diff.json'
+        md_out = output_dir / 'diff.md'
+    write_json(json_out, result)
     with open(md_out, 'w', encoding='utf-8') as f:
         f.write(f'# {title}\n\n')
         for line in meta_lines:
@@ -158,38 +168,74 @@ def _write_diff_output(out_stem: str, title: str, meta_lines: list,
 
     print(f'diff 输出：\n  {json_out}\n  {md_out}')
     print(f'  保留 {len(kept)} 个文件（排除 {excluded} 个测试文件）')
+    result['artifact_paths'] = {
+        'diff_json': str(json_out),
+        'diff_markdown': str(md_out),
+    }
     return result
 
 
-def get_commit_diff(repo: str, commit: str) -> dict:
+def get_commit_diff(repo: str, commit: str, output_dir: Path = None) -> dict:
     if not _is_git_repo(repo):
         raise RuntimeError(f'{repo} 不是 Git 仓库。请 cd 到目标仓库或通过 --repo 指定。')
     ensure_commit(repo, commit)
+    resolved_commit = _git(repo, 'rev-parse', f'{commit}^{{commit}}').strip()
 
     # 单 commit 相对父节点的 diff
     try:
-        raw = _git(repo, 'diff', f'{commit}~1', commit, '--no-color',
+        raw = _git(repo, 'diff', f'{resolved_commit}~1', resolved_commit, '--no-color',
                    check=True)
     except RuntimeError:
         # 根 commit（无父节点），退回 git show
-        raw = _git(repo, 'show', commit, '--no-color', '--format=', check=True)
+        raw = _git(repo, 'show', resolved_commit, '--no-color', '--format=', check=True)
 
     files_split = split_diff_by_file(raw)
-    return _write_diff_output(
-        out_stem=f'{commit}_diff',
-        title=f'Commit {commit} diff',
+    identity = repository_identity(repo)
+    if output_dir is None:
+        output_dir, identity = review_case_dir(repo, resolved_commit)
+    result = _write_diff_output(
+        out_stem=f'{resolved_commit}_diff',
+        title=f'Commit {resolved_commit} diff',
         meta_lines=[f'仓库: {Path(repo).resolve()}'],
         files_split=files_split,
-        extra_meta={'commit': commit, 'repo': str(Path(repo).resolve())},
+        extra_meta={
+            'source': 'commit',
+            'commit': resolved_commit,
+            'repo': str(Path(repo).resolve()),
+            'repository': identity,
+        },
+        output_dir=output_dir,
     )
+    manifest_path = Path(output_dir) / 'manifest.json'
+    existing = {}
+    if manifest_path.exists():
+        try:
+            existing = json.loads(manifest_path.read_text(encoding='utf-8'))
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+    manifest = {
+        'schema_version': '1.0',
+        'kind': 'review',
+        'source': 'commit',
+        'created_at': existing.get('created_at') or now_iso(),
+        'updated_at': now_iso(),
+        'repository': identity,
+        'commit': {'sha': resolved_commit, 'short_sha': resolved_commit[:12]},
+        'artifacts': {'diff_json': 'diff.json', 'diff_markdown': 'diff.md'},
+        'reviewers': existing.get('reviewers', []),
+    }
+    write_json(manifest_path, manifest)
+    result['artifact_paths']['manifest'] = str(manifest_path)
+    return result
 
 
-def get_mr_review_diff(domain: str, project_path: str, mr_iid) -> dict:
+def get_mr_review_diff(domain: str, project_path: str, mr_iid,
+                       output_dir: Path = None) -> dict:
     """从 CodeHub 取 MR diff，走同一套装配/输出管线。
 
-    benchmark 主路径：AI 评的 diff = 真人当时评的那份，行号天然对齐，
-    避开走 merge_commit_sha 的 squash/rebase diff 不一致噪声。
-    产物 outputs/diffs/{mr_iid}_mrdiff.json/.md，files[] 形状与 commit 模式一致。
+    benchmark 主路径直接读取 MR diff，避免 merge_commit_sha 的 squash/rebase 噪声；
+    MR 后续可能继续推送，因此收集脚本还会复核真人评论位置是否仍在当前 diff。
+    benchmark 传 output_dir 后产出 diff.json/.md；未传时保留旧路径兼容。
     """
     from common.codehub_client import CodeHubClient
     client = CodeHubClient(domain=domain)
@@ -208,8 +254,10 @@ def get_mr_review_diff(domain: str, project_path: str, mr_iid) -> dict:
         meta_lines=[f'MR: {project_path} !{mr_iid}', f'domain: {domain}'],
         files_split=files_split,
         extra_meta={
-            'mr_iid': mr_iid, 'project_path': project_path, 'domain': domain,
+            'source': 'mr', 'mr_iid': mr_iid,
+            'project_path': project_path, 'domain': domain,
         },
+        output_dir=output_dir,
     )
 
 
@@ -220,14 +268,19 @@ if __name__ == '__main__':
     src.add_argument('--mr', help='MR，格式 <project_path>/<mr_iid>（走 CodeHub，需 --domain）')
     parser.add_argument('--repo', default='.', help='目标 Git 仓库（仅 --commit 用，默认当前目录）')
     parser.add_argument('--domain', help='CodeHub 地域（仅 --mr 用，如 codehub-g）')
+    parser.add_argument('--output-dir', help='显式指定 diff.json/.md 输出目录')
     args = parser.parse_args()
 
     if args.commit:
-        get_commit_diff(repo=args.repo, commit=args.commit)
+        get_commit_diff(repo=args.repo, commit=args.commit,
+                        output_dir=Path(args.output_dir) if args.output_dir else None)
     else:
         if not args.domain:
             parser.error('--mr 必须配合 --domain（如 codehub-g）')
         project, _, iid = args.mr.rpartition('/')
         if not project or not iid:
             parser.error('--mr 格式应为 <project_path>/<mr_iid>，如 hw-xxx/svc/42')
-        get_mr_review_diff(domain=args.domain, project_path=project, mr_iid=iid)
+        get_mr_review_diff(
+            domain=args.domain, project_path=project, mr_iid=iid,
+            output_dir=Path(args.output_dir) if args.output_dir else None,
+        )

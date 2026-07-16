@@ -4,6 +4,10 @@
 `templates/review_report_template.md`、`prompts/review_with_persona_prompt.md`
 和 `personas/*.skill.md` 的"输出要求"段必须与本文件完全对齐，不得另起一套字段名。
 
+磁盘上的评审数据以 `references/review-json-format.md` 为结构化真源，使用
+`scripts/review/render_review.py` 渲染成本文件规定的 Markdown。JSON 保存完整
+`file_path` 供 benchmark 对齐；Markdown 为保持既有展示契约仍显示 basename。
+
 > 迁移来源：旧 `huawei_code_review/SKILL.md` 的"输出报告模板"与"铁律格式块"。
 > 旧文件内部存在一处矛盾——铁律格式块定义要求"连贯段落 + `【修改示例】`"，
 > 但其底部"输出示例"却用了 `【问题根因】`/`【落地解决方案】` 拆字段写法。

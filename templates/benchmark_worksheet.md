@@ -1,15 +1,15 @@
 # Benchmark 对照表（手工填写）
 
 > 用于 `/code-review benchmark` 的人工比对。每个 MR 一份。
-> 对照包来自 `outputs/benchmark/{mr_iid}_pair.json`（真人评论），AI 报告来自
-> `/code-review review --mr <project>/<iid> --domain <d> --persona <工号>`。
+> 当前 benchmark case 目录同时包含 `ground_truth.json`（真人评论）、
+> `ai_review.json`（AI 评论）与由二者生成的 `comparison.json/.md`。
 
 ## 基本信息
 
 - reviewer_w3 / 姓名：`{reviewer_w3}` / `{reviewer_name}`
 - MR：`{project_path} !{mr_iid}`
 - persona：`{persona}`
-- 真人评论数：`{real_comment_count}`（enriched matched，含 file/line）
+- 可比较真人评论数：`{comment_count}`（另排除当前 diff 无法定位 `{diff_location_unmatched_count}` 条）
 - MR diff 文件数：`{kept_files}`
 - 日期：`{date}`
 
@@ -24,7 +24,7 @@
    - **新发现**：AI 找对了真人没指的有效问题。**不算噪声**，单独成桶（persona 不会这么评，但确有价值）。
    - **噪声**：AI 说错了 / 无关 / 误报。
 4. 真人问题里 AI 没碰到的标 **漏检**。
-5. 行号取 diff 新文件行号（AI 报告里的 `【位置】文件:行号`），与 pair.json 的 real_comments 行号同源，理论上对得上。
+5. 使用 JSON 中的完整 `file_path` 和 diff 新文件行号对齐；Markdown 的 basename 只用于展示。
 
 ## 对照表
 
@@ -35,8 +35,8 @@
 | 3 |  |  |  |  |  |
 | ... |  |  |  |  |  |
 
-> 真人问题列：从 `{mr_iid}_pair.json` 的 `real_comments` 归并而来。
-> AI 意见列：从 `/code-review review --mr` 生成的报告里逐条抄。
+> 真人问题列：从 `ground_truth.json` 的 `comments` 归并而来。
+> AI 意见列：从复用普通 review 能力生成的 `ai_review.json` 读取。
 > 风格 1-5：该 AI 意见"像不像该 reviewer 本人的语气/口头禅"（5=非常像，1=完全不像）。
 
 ## 汇总（本 MR）
