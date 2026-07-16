@@ -32,7 +32,7 @@ CN_TO_EN = {
 def normalize_record(row: dict) -> dict:
     """把阿基米德/Excel 的中文 key 记录归一化为英文 key 记录。
 
-    已是英文 key 的字段原样保留；project_path / mr_iid / note_hash /
+    已是英文 key 的字段原样保留；domain / project_path / mr_iid / note_hash /
     is_test_file / language / error_detail 由 enrich 阶段补入。
     """
     out = {}

@@ -56,7 +56,7 @@ cp .env.example .env
 
 # 3. 蒸馏某评审人的 persona（首次会在浏览器弹阿基米德登录，不要 headless）
 /code-review distill --reviewer-w3 <工号> \
-  --start 2024-07-01 --end 2024-08-01 --domain codehub-g
+  --start 2024-07-01 --end 2024-08-01
 
 # 4. 用该 persona 评审一个 commit（在目标代码仓目录执行）
 /code-review review --commit <commit_id> --persona <工号>
@@ -68,6 +68,9 @@ cp .env.example .env
 已有同工号 persona 时只保留最近一个旧版本：
 `outputs/generated_personas/backup/reviewer-{姓名}-{工号}.previous.skill.md`。如需只生成草稿供检查，
 给 distill 增加 `--draft-only`。
+
+CodeHub domain 默认从阿基米德导出的每条「检视地址」自动识别；多 domain 数据会分组处理。
+`--domain` 仅作为可选严格约束，和 URL 不一致时会立即报错。
 
 更细的参数、每步脚本、报告格式契约见 `SKILL.md`。
 

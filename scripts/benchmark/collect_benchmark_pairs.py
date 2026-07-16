@@ -10,13 +10,13 @@ ground truth 取 enriched matched 评论（有 file/line/severity）；enrich �
 评论不在基准里（如需全量可改读 raw 阿基米德 Excel，后续再说）。
 
 - --list：纯本地读 enriched，列候选 MR（不需内网，不需 token）。
-- --pick/--mr-iid：需 --domain（拉 MR diff 走 CodeHub）。
+- --pick/--mr-iid：优先使用 enriched 的 domain；旧数据缺失时才需 --domain。
 
 用法（由顶层 SKILL.md 用绝对路径调用）：
     python <SKILL_ROOT>/scripts/benchmark/collect_benchmark_case.py \
         --reviewer-w3 z00000001 --list
     python <SKILL_ROOT>/scripts/benchmark/collect_benchmark_case.py \
-        --reviewer-w3 z00000001 --pick 1 --domain codehub-g
+        --reviewer-w3 z00000001 --pick 1
 """
 import argparse
 import hashlib
@@ -33,6 +33,9 @@ from common.output_layout import benchmark_case_dir, normalize_domain  # noqa: E
 from common.paths import ENRICHED_DIR, ensure_dirs  # noqa: E402
 from common.jsonl_io import read_jsonl  # noqa: E402
 from common.diff_parser import parse_diff_to_lines  # noqa: E402
+from common.codehub_url import (  # noqa: E402
+    normalize_codehub_domain, parse_review_url,
+)
 from review.load_persona import find_persona  # noqa: E402
 
 
@@ -44,8 +47,15 @@ def _load_reviewer_records(reviewer_w3: str) -> list:
     for p in sorted(ENRICHED_DIR.glob('*_enriched.jsonl')):
         for r in read_jsonl(str(p)):
             if str(r.get('reviewer_w3', '')) == reviewer_w3:
+                if not r.get('domain') and r.get('link'):
+                    try:
+                        r = dict(r)
+                        r['domain'] = parse_review_url(r['link'])['domain']
+                    except ValueError:
+                        pass
                 key = (
-                    r.get('project_path', ''), str(r.get('mr_iid', '')),
+                    r.get('domain', ''), r.get('project_path', ''),
+                    str(r.get('mr_iid', '')),
                     r.get('note_hash', '') or (
                         r.get('file_path', ''), str(r.get('line', '')),
                         r.get('comment', ''), r.get('created_at', ''),
@@ -59,14 +69,15 @@ def _load_reviewer_records(reviewer_w3: str) -> list:
 
 
 def _aggregate_mrs(records: list):
-    """按 (project_path, mr_iid) 聚合评论。返回 [((pp, mi), {'records': [...]})] 按评论数降序。"""
+    """按 (domain, project_path, mr_iid) 聚合，按评论数降序。"""
     mrs = defaultdict(lambda: {'records': []})
     for r in records:
         pp = r.get('project_path', '')
         mi = r.get('mr_iid', '')
+        domain = r.get('domain', '')
         if not pp or not mi:
             continue
-        mrs[(pp, mi)]['records'].append(r)
+        mrs[(domain, pp, mi)]['records'].append(r)
     return sorted(mrs.items(), key=lambda kv: -len(kv[1]['records']))
 
 
@@ -79,18 +90,18 @@ def list_mrs(reviewer_w3: str) -> None:
     ordered = _aggregate_mrs(records)
     print(f'reviewer_w3={reviewer_w3}  共 {len(records)} 条 matched 评论，'
           f'{len(ordered)} 个 MR\n')
-    print(f'{"序号":>4}  {"project_path/mr_iid":<48}  {"评论数":>5}  严重程度')
+    print(f'{"序号":>4}  {"domain/project_path/mr_iid":<58}  {"评论数":>5}  严重程度')
     print('-' * 90)
-    for i, ((pp, mi), v) in enumerate(ordered, 1):
+    for i, ((domain, pp, mi), v) in enumerate(ordered, 1):
         sev = Counter(str(r.get('severity', '')).strip() or '未知'
                       for r in v['records'])
         sev_str = ', '.join(f'{k}:{n}' for k, n in sev.most_common())
-        key = f'{pp}/{mi}'
-        print(f'{i:>4}  {key[:48]:<48}  {len(v["records"]):>5}  {sev_str}')
-    print('\n选用: --pick <序号> 或 --mr-iid <iid>（需 --domain 拉 MR diff）')
+        key = f'{domain or "?"}/{pp}/{mi}'
+        print(f'{i:>4}  {key[:58]:<58}  {len(v["records"]):>5}  {sev_str}')
+    print('\n选用: --pick <序号> 或 --mr-iid <iid>；旧 enriched 无 domain 时补 --domain')
 
 
-def _resolve(reviewer_w3, pick=None, mr_iid=None, project_path=None):
+def _resolve(reviewer_w3, pick=None, mr_iid=None, project_path=None, domain=None):
     records = _load_reviewer_records(reviewer_w3)
     if not records:
         raise SystemExit(f'enriched 里没有 reviewer_w3={reviewer_w3} 的记录，先跑 distill。')
@@ -102,15 +113,19 @@ def _resolve(reviewer_w3, pick=None, mr_iid=None, project_path=None):
         return ordered[idx]
     matches = []
     for item in ordered:
-        (pp, mi), v = item
-        if str(mi) == str(mr_iid) and (not project_path or pp == project_path):
+        (item_domain, pp, mi), v = item
+        if (str(mi) == str(mr_iid)
+                and (not project_path or pp == project_path)
+                and (not domain or item_domain == domain)):
             matches.append(item)
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
-        projects = '\n'.join(f'  - {pp}' for (pp, _), _v in matches)
+        projects = '\n'.join(
+            f'  - {item_domain or "?"}/{pp}'
+            for (item_domain, pp, _), _v in matches)
         raise SystemExit(
-            f'mr_iid={mr_iid} 在多个项目中存在，请增加 --project-path：\n{projects}')
+            f'mr_iid={mr_iid} 存在多个候选，请增加 --project-path/--domain：\n{projects}')
     raise SystemExit(f'未在 enriched 找到 mr_iid={mr_iid}')
 
 
@@ -130,6 +145,22 @@ def collect_case(reviewer_w3: str, project_path: str, mr_iid,
                  records: list, domain: str) -> dict:
     from review.get_commit_diff import get_mr_review_diff  # 复用 MR diff 装配管线
     ensure_dirs()
+    explicit_domain = normalize_codehub_domain(domain) if domain else ''
+    detected_domains = {
+        normalize_codehub_domain(r.get('domain'))
+        for r in records if r.get('domain')
+    }
+    if explicit_domain and detected_domains and detected_domains != {explicit_domain}:
+        raise ValueError(
+            f'--domain={explicit_domain} 与 enriched domain={sorted(detected_domains)} 不一致')
+    if not explicit_domain:
+        if len(detected_domains) == 1:
+            explicit_domain = next(iter(detected_domains))
+        elif not detected_domains:
+            raise ValueError('旧 enriched 记录没有 domain，请显式传入 --domain')
+        else:
+            raise ValueError(f'同一 benchmark case 含多个 domain: {sorted(detected_domains)}')
+    domain = explicit_domain
     output_dir = benchmark_case_dir(domain, project_path, mr_iid, reviewer_w3)
     output_dir.mkdir(parents=True, exist_ok=True)
     # 当前方案只保留最新结果；输入重新收集后，旧 AI/比较结果已失效。
@@ -178,6 +209,7 @@ def collect_case(reviewer_w3: str, project_path: str, mr_iid,
         'reviewer_name': next((r.get('reviewer_name', '') for r in records
                                if r.get('reviewer_name')), ''),
         'project_path': project_path,
+        'domain': domain,
         'mr_iid': mr_iid,
         'source_comment_count': len(real_comments),
         'comment_count': len(eligible_comments),
@@ -254,19 +286,19 @@ def main() -> None:
     g.add_argument('--pick', help='--list 输出的序号')
     g.add_argument('--mr-iid', help='直接按 mr_iid 选')
     parser.add_argument('--project-path', help='mr_iid 跨项目重复时用于消歧')
-    parser.add_argument('--domain', help='CodeHub 地域（--pick/--mr-iid 拉 diff 需要）')
+    parser.add_argument('--domain', help='可选：旧 enriched 回退或候选消歧')
     args = parser.parse_args()
 
     if args.list:
         list_mrs(args.reviewer_w3)
     else:
-        if not args.domain:
-            parser.error('--pick/--mr-iid 需配合 --domain（拉 MR diff 走 CodeHub）')
-        (pp, mi), v = _resolve(
+        (detected_domain, pp, mi), v = _resolve(
             args.reviewer_w3, pick=args.pick, mr_iid=args.mr_iid,
             project_path=args.project_path,
+            domain=normalize_codehub_domain(args.domain) if args.domain else None,
         )
-        collect_case(args.reviewer_w3, pp, mi, v['records'], args.domain)
+        collect_case(
+            args.reviewer_w3, pp, mi, v['records'], args.domain or detected_domain)
 
 
 if __name__ == '__main__':

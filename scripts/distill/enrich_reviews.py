@@ -10,7 +10,7 @@
 用法（由顶层 SKILL.md 用绝对路径调用）：
     python <SKILL_ROOT>/scripts/distill/enrich_reviews.py \
         --input <SKILL_ROOT>/outputs/raw_archimedes/z00000001_2024-07-01_2026-01-01_archimedes.xlsx \
-        --reviewer-w3 z00000001 --domain codehub-g
+        --reviewer-w3 z00000001
 """
 import argparse
 import re
@@ -23,12 +23,13 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from common.paths import ENRICHED_DIR, ensure_dirs  # noqa: E402
-from common.codehub_client import CodeHubClient  # noqa: E402
+from common.codehub_url import (  # noqa: E402
+    REGIONS, normalize_codehub_domain, parse_review_url,
+)
 from common.diff_parser import parse_diff_to_lines  # noqa: E402
 from common.context_builder import build_context  # noqa: E402
 from common.filters import is_noise_comment  # noqa: E402
-from common.excel_io import read_archimedes_excel, write_enriched_excel  # noqa: E402
-from common.jsonl_io import write_jsonl, normalize_record  # noqa: E402
+from common.jsonl_io import write_jsonl  # noqa: E402
 
 MAX_WORKERS = 5
 
@@ -46,13 +47,18 @@ _EXT_LANG = {
 
 
 def extract_project_and_mr(link):
-    m = re.search(r'\.huawei\.com/(.+)/merge_requests/(\d+)', link)
-    return (m.group(1), m.group(2)) if m else (None, None)
+    try:
+        parsed = parse_review_url(link)
+        return parsed['project_path'], parsed['mr_iid']
+    except ValueError:
+        return None, None
 
 
 def extract_note_hash(link):
-    m = re.search(r'#note_(.+)', link)
-    return m.group(1) if m else None
+    try:
+        return parse_review_url(link)['note_hash']
+    except ValueError:
+        return None
 
 
 def detect_test_file(file_path: str) -> bool:
@@ -77,8 +83,24 @@ def _derive_start_end(input_path: str, start: str, end: str):
     return start or 'unknown', end or 'unknown'
 
 
-def enrich(input_xlsx: str, reviewer_w3: str, domain: str,
-           start: str, end: str, token: str = None) -> dict:
+def _parse_link_info(indexed_links, requested_domain: str = ''):
+    """纯本地解析检视地址，返回 (按行身份, domain 列表, 错误列表)。"""
+    wanted = normalize_codehub_domain(requested_domain) if requested_domain else ''
+    link_info, errors = {}, []
+    for index, addr in indexed_links:
+        try:
+            link_info[index] = parse_review_url(addr, expected_domain=wanted)
+        except ValueError as error:
+            errors.append((index, str(error)))
+    domains = sorted({item['domain'] for item in link_info.values()})
+    return link_info, domains, errors
+
+
+def enrich(input_xlsx: str, reviewer_w3: str, domain: str = '',
+           start: str = '', end: str = '', token: str = None) -> dict:
+    from common.codehub_client import CodeHubClient
+    from common.excel_io import read_archimedes_excel, write_enriched_excel
+
     ensure_dirs()
     start, end = _derive_start_end(input_xlsx, start, end)
 
@@ -104,22 +126,41 @@ def enrich(input_xlsx: str, reviewer_w3: str, domain: str,
     noise_filtered = before_noise - len(df)
     print(f'过滤：移除非MR/非merged {status_filtered} 条，移除噪声 {noise_filtered} 条，剩余 {len(df)} 条')
 
-    client = CodeHubClient(domain=domain, token=token)
+    if '检视地址' not in df.columns:
+        raise RuntimeError('阿基米德 Excel 缺少「检视地址」列，无法推导 CodeHub domain')
+    link_info, domains, link_errors = _parse_link_info(
+        df['检视地址'].items(), requested_domain=domain)
+    if link_errors:
+        preview = '\n'.join(
+            f'  - Excel 行 {index + 2}: {error}' for index, error in link_errors[:5])
+        more = f'\n  ... 另有 {len(link_errors)-5} 条' if len(link_errors) > 5 else ''
+        raise RuntimeError(
+            f'{len(link_errors)} 条检视地址无法可靠解析：\n{preview}{more}')
+    if not domains:
+        raise RuntimeError('过滤后没有可用于 enrich 的 CodeHub MR 检视地址')
+    print('检测到 CodeHub domain：' + ', '.join(domains))
 
-    # 数字用户 ID
+    # 每个 CodeHub 实例的数字 user_id 可能不同，必须分别获取。
     print('\n===== 获取检视人数字用户 ID =====')
-    user_id, _ = client.get_user_id(reviewer_w3)
-    if not user_id:
-        raise RuntimeError(f'无法获取用户ID（{reviewer_w3}），终止')
+    clients, user_ids = {}, {}
+    for detected_domain in domains:
+        client = CodeHubClient(domain=detected_domain, token=token)
+        user_id, _ = client.get_user_id(reviewer_w3)
+        if not user_id:
+            raise RuntimeError(
+                f'无法在 {detected_domain} 获取用户ID（{reviewer_w3}），终止')
+        clients[detected_domain] = client
+        user_ids[detected_domain] = user_id
 
-    # 提取唯一项目 / MR
-    project_set, mr_set = set(), set()
-    for addr in df['检视地址'].dropna():
-        pp, mi = extract_project_and_mr(addr)
-        if pp and mi:
-            project_set.add(pp)
-            mr_set.add((pp, mi))
-    print(f'共 {len(project_set)} 个项目，{len(mr_set)} 个唯一 MR')
+    # 完整身份必须包含 domain，避免不同地域同项目/MR 冲突。
+    project_set = {
+        (item['domain'], item['project_path']) for item in link_info.values()
+    }
+    mr_set = {
+        (item['domain'], item['project_path'], item['mr_iid'])
+        for item in link_info.values()
+    }
+    print(f'共 {len(project_set)} 个地域项目，{len(mr_set)} 个唯一 MR')
 
     # 并发获取 reviews → reviews_map[did] = review；记录失败项目
     print(f'\n===== 逐项目获取评审意见（{len(project_set)} 个）=====')
@@ -128,30 +169,35 @@ def enrich(input_xlsx: str, reviewer_w3: str, domain: str,
     sorted_projects = sorted(project_set)
     done = 0
 
-    def fetch_reviews(pp):
+    def fetch_reviews(item):
+        detected_domain, pp = item
         try:
-            return pp, client.get_reviews_for_project(pp, user_id), None
+            reviews = clients[detected_domain].get_reviews_for_project(
+                pp, user_ids[detected_domain])
+            return detected_domain, pp, reviews, None
         except Exception as e:  # noqa: BLE001
-            return pp, [], str(e)
+            return detected_domain, pp, [], str(e)
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futs = {ex.submit(fetch_reviews, pp): pp for pp in sorted_projects}
+        futs = {ex.submit(fetch_reviews, item): item for item in sorted_projects}
         for fut in as_completed(futs):
-            pp = futs[fut]
+            detected_domain, pp = futs[fut]
             try:
-                pp, reviews, err = fut.result()
+                detected_domain, pp, reviews, err = fut.result()
             except Exception as e:  # noqa: BLE001
-                pp, reviews, err = futs[fut], [], str(e)
+                detected_domain, pp = futs[fut]
+                reviews, err = [], str(e)
             if err:
-                failed_projects.add(pp)
+                failed_projects.add((detected_domain, pp))
             for r in reviews:
                 did = r.get('discussion_id', '')
                 if did:
-                    reviews_map[did] = r
+                    reviews_map[(detected_domain, did)] = r
             done += 1
-            print(f'  [{done}/{len(sorted_projects)}] {pp} - {len(reviews)} 条'
+            print(f'  [{done}/{len(sorted_projects)}] [{detected_domain}] '
+                  f'{pp} - {len(reviews)} 条'
                   + (f' (失败: {err})' if err else ''))
-    print(f'reviews_map 共 {len(reviews_map)} 条（去重 by discussion_id）')
+    print(f'reviews_map 共 {len(reviews_map)} 条（去重 by domain + discussion_id）')
 
     # 并发获取 MR diff → mr_diff_cache；记录失败 MR
     print('\n===== 构建 MR diff 缓存 =====')
@@ -160,45 +206,53 @@ def enrich(input_xlsx: str, reviewer_w3: str, domain: str,
     sorted_mrs = sorted(mr_set)
     done = 0
 
-    def fetch_diff(pp, mi):
+    def fetch_diff(item):
+        detected_domain, pp, mi = item
         try:
-            return pp, mi, client.get_mr_diff(pp, mi), None
+            return (detected_domain, pp, mi,
+                    clients[detected_domain].get_mr_diff(pp, mi), None)
         except Exception as e:  # noqa: BLE001
-            return pp, mi, {}, str(e)
+            return detected_domain, pp, mi, {}, str(e)
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futs = {ex.submit(fetch_diff, pp, mi): (pp, mi) for pp, mi in sorted_mrs}
+        futs = {ex.submit(fetch_diff, item): item for item in sorted_mrs}
         for fut in as_completed(futs):
-            pp, mi = futs[fut]
+            detected_domain, pp, mi = futs[fut]
             try:
-                _, _, diff_map, err = fut.result()
+                _, _, _, diff_map, err = fut.result()
             except Exception as e:  # noqa: BLE001
                 diff_map, err = {}, str(e)
-            cache_key = f"{pp}_{mi}"
+            cache_key = (detected_domain, pp, mi)
             if err:
                 failed_mrs.add(cache_key)
             mr_diff_cache[cache_key] = diff_map
             done += 1
-            print(f'  [{done}/{len(sorted_mrs)}] {pp} !{mi} - {len(diff_map)} 文件'
+            print(f'  [{done}/{len(sorted_mrs)}] [{detected_domain}] '
+                  f'{pp} !{mi} - {len(diff_map)} 文件'
                   + (f' (失败: {err})' if err else ''))
     print(f'mr_diff_cache 共 {len(mr_diff_cache)} 个 MR')
 
     # 逐行匹配 + 构建上下文
     print('\n===== 构建代码上下文 =====')
     results = []
-    for _, row in df.iterrows():
+    for index, row in df.iterrows():
         addr = row.get('检视地址', '')
-        note_hash = extract_note_hash(addr)
-        project_path, mr_iid = extract_project_and_mr(addr)
+        parsed = link_info[index]
+        row_domain = parsed['domain']
+        project_path = parsed['project_path']
+        mr_iid = parsed['mr_iid']
+        note_hash = parsed['note_hash']
 
         if not note_hash or not project_path or not mr_iid:
             api_status, ctx_status, error_detail = 'invalid_link', 'no_review', '无法从检视地址提取 project/mr/note_hash'
             review = None
-        elif project_path in failed_projects:
-            api_status, ctx_status, error_detail = 'api_error', 'no_review', f'reviews 接口请求失败: {project_path}'
+        elif (row_domain, project_path) in failed_projects:
+            api_status, ctx_status, error_detail = (
+                'api_error', 'no_review',
+                f'reviews 接口请求失败: {row_domain}/{project_path}')
             review = None
         else:
-            review = reviews_map.get(note_hash)
+            review = reviews_map.get((row_domain, note_hash))
             if review:
                 api_status = 'matched_review'
                 error_detail = ''
@@ -231,7 +285,7 @@ def enrich(input_xlsx: str, reviewer_w3: str, domain: str,
                     ctx_status, error_detail = 'invalid_line', f'line 非数字: {line}'
                     target_line = None
                 else:
-                    cache_key = f"{project_path}_{mr_iid}"
+                    cache_key = (row_domain, project_path, mr_iid)
                     if cache_key in failed_mrs:
                         ctx_status, error_detail = 'api_error', f'changes 接口请求失败: {cache_key}'
                     else:
@@ -253,6 +307,7 @@ def enrich(input_xlsx: str, reviewer_w3: str, domain: str,
             'reviewer_w3': reviewer_w3,
             'submitter_name': row.get('提交人姓名', ''),
             'submitter_w3': row.get('提交人W3', ''),
+            'domain': row_domain,
             'project_path': project_path or '',
             'mr_iid': mr_iid or '',
             'note_hash': note_hash or '',
@@ -295,6 +350,7 @@ def enrich(input_xlsx: str, reviewer_w3: str, domain: str,
 
     return {
         'reviewer_w3': reviewer_w3, 'reviewer_name': reviewer_name,
+        'domains': domains,
         'start': start, 'end': end, 'total': total,
         'api_matched': api_matched, 'ctx_matched': ctx_matched,
         'matched': len(matched), 'xlsx': str(xlsx_out), 'jsonl': str(jsonl_out),
@@ -305,9 +361,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='补充 CodeHub 字段和代码上下文')
     parser.add_argument('--input', required=True, help='阿基米德导出的 Excel 路径')
     parser.add_argument('--reviewer-w3', required=True, help='检视人 w3 账号')
-    parser.add_argument('--domain', required=True,
-                        choices=['codehub-y', 'codehub-g', 'cr-y.codehub', 'open.codehub'],
-                        help='CodeHub 地域')
+    parser.add_argument('--domain', choices=sorted(REGIONS),
+                        help='可选：限制/校验 CodeHub 地域；默认从检视地址自动推导')
     parser.add_argument('--start', default='', help='开始日期（不传则从文件名解析）')
     parser.add_argument('--end', default='', help='结束日期（不传则从文件名解析）')
     args = parser.parse_args()

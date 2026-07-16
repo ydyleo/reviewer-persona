@@ -28,9 +28,20 @@ class BenchmarkResolveTest(unittest.TestCase):
     @patch('benchmark.collect_benchmark_pairs._load_reviewer_records')
     def test_project_path_disambiguates_mr(self, load):
         load.return_value = self.records
-        (project, iid), _ = _resolve(
+        (domain, project, iid), _ = _resolve(
             'z1', mr_iid=6, project_path='team/service-b')
+        self.assertEqual(domain, '')
         self.assertEqual((project, iid), ('team/service-b', 6))
+
+    @patch('benchmark.collect_benchmark_pairs._load_reviewer_records')
+    def test_domain_disambiguates_same_project_and_mr(self, load):
+        load.return_value = [
+            {'domain': 'codehub-g', 'project_path': 'team/service', 'mr_iid': 6},
+            {'domain': 'codehub-y', 'project_path': 'team/service', 'mr_iid': 6},
+        ]
+        (domain, _project, _iid), _ = _resolve(
+            'z1', mr_iid=6, domain='codehub-y')
+        self.assertEqual(domain, 'codehub-y')
 
     @patch('benchmark.collect_benchmark_pairs._persona_metadata')
     @patch('benchmark.collect_benchmark_pairs.benchmark_case_dir')
@@ -51,9 +62,11 @@ class BenchmarkResolveTest(unittest.TestCase):
         }
         persona.return_value = {'w3': 'z1', 'file': 'persona.md', 'sha256': 'x'}
         records = [
-            {'reviewer_name': '张三', 'file_path': 'src/config.cpp',
+            {'reviewer_name': '张三', 'domain': 'codehub-g',
+             'file_path': 'src/config.cpp',
              'line': 28, 'comment': '命中'},
-            {'reviewer_name': '张三', 'file_path': 'src/old.cpp',
+            {'reviewer_name': '张三', 'domain': 'codehub-g',
+             'file_path': 'src/old.cpp',
              'line': 9, 'comment': '当前 diff 已不存在'},
         ]
         with tempfile.TemporaryDirectory() as temp:
@@ -63,6 +76,7 @@ class BenchmarkResolveTest(unittest.TestCase):
                 (Path(temp) / 'ground_truth.json').read_text(encoding='utf-8'))
         self.assertTrue(ground_truth['benchmark_ready'])
         self.assertEqual(ground_truth['comment_count'], 1)
+        self.assertEqual(ground_truth['domain'], 'codehub-g')
         self.assertEqual(len(ground_truth['excluded_comments']), 1)
 
 

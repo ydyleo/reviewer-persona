@@ -14,15 +14,11 @@ import requests
 import urllib3
 
 from common.config import get_secret  # .env 优先，环境变量回退
+from common.codehub_url import (  # re-export 保持已有导入兼容
+    REGIONS, normalize_codehub_domain, parse_review_url,
+)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-REGIONS = {
-    'codehub-y': 'codehub-y',
-    'codehub-g': 'codehub-g',
-    'cr-y.codehub': 'cr-y.codehub',
-    'open.codehub': 'open.codehub',
-}
 
 # 地域序号映射（保留 legacy 交互输入兼容）
 REGION_BY_INDEX = {
@@ -50,12 +46,10 @@ def _encoded_path(project_path: str) -> str:
 
 class CodeHubClient:
     def __init__(self, domain: str, token: str = None, timeout: int = 30):
-        if domain not in REGIONS:
-            raise ValueError(f'未知地域 {domain}，可选: {list(REGIONS)}')
-        self.domain = domain
+        self.domain = normalize_codehub_domain(domain)
         self.token = token or get_secret('CODEHUB_TOKEN')
         self.timeout = timeout
-        self.base = f'https://{domain}.huawei.com/api/v4'
+        self.base = f'https://{self.domain}.huawei.com/api/v4'
 
     def get_user_id(self, username: str):
         """通过工号获取 CodeHub 数字用户 ID。返回 (user_id, name) 或 (None, None)。"""

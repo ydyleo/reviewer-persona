@@ -35,12 +35,11 @@ description: 华为 CodeHub 代码评审 skill。从历史评审数据蒸馏 rev
 /code-review distill \
   --reviewer-w3 <工号> \
   --start <YYYY-MM-DD> \
-  --end <YYYY-MM-DD> \
-  --domain <codehub-y|codehub-g|cr-y.codehub|open.codehub> \
-  [--draft-only]
+  --end <YYYY-MM-DD> [--draft-only]
 ```
 
-`--domain` 只用于后续 enrich 调 CodeHub API；export 阿基米德不需要 domain。
+默认逐条从阿基米德「检视地址」推导 CodeHub domain；同一批数据包含多个 domain 时自动分组处理。
+可选传 `--domain <地域>` 作为严格约束，任一 URL 与其不一致就停止，不静默串地域。
 默认在生成并校验后立即启用 persona；仅明确传 `--draft-only` 时保留草稿而不启用。
 
 ### 执行流程
@@ -61,11 +60,13 @@ python <SKILL_ROOT>/scripts/distill/export_archimedes.py \
 # 首次需在 .env 填入 CODEHUB_TOKEN（cp .env.example .env 后编辑）
 python <SKILL_ROOT>/scripts/distill/enrich_reviews.py \
   --input <SKILL_ROOT>/outputs/raw_archimedes/<上面>.xlsx \
-  --reviewer-w3 <工号> --domain <地域> --start <起> --end <止>
+  --reviewer-w3 <工号> --start <起> --end <止>
 ```
 - comment 取阿基米德 Excel 检视意见；file_path/line/severity 取 CodeHub /reviews；diff/上下文取 CodeHub /changes。
+- 严格解析每条 URL 的 domain/project_path/mr_iid/note_hash，只接受四个已配置 CodeHub 地域；
+  每个 domain 分别获取 user_id，并用 `(domain, project_path, mr_iid)` 隔离请求与缓存。
 - 正式输出只保留 `context_status = matched` 的记录。
-- 产物：`outputs/enriched/{工号}_{起}_{止}_enriched.xlsx` 和 `.jsonl`
+- 产物：`outputs/enriched/{工号}_{起}_{止}_enriched.xlsx` 和 `.jsonl`，每条记录保存 `domain`。
 
 **Step 3 生成结构化 JSON**
 ```bash
@@ -200,7 +201,7 @@ python <SKILL_ROOT>/scripts/review/load_persona.py --list
 
 ```
 /code-review refresh-persona \
-  --reviewer-w3 <工号> --start <起> --end <止> --domain <地域>
+  --reviewer-w3 <工号> --start <起> --end <止> [--domain <地域>]
 ```
 
 ### 执行流程
@@ -232,12 +233,13 @@ benchmark 的解法是按 **`domain + project_path + mr_iid`** 对齐：AI 评�
 # ① 列候选 MR（纯本地读 enriched，不需内网/token）
 /code-review benchmark --reviewer-w3 <工号>
 
-# ② 选一个 MR，生成 benchmark case + AI 报告
+# ② 选一个 MR，生成 benchmark case + AI 报告；domain 从 enriched 自动取得
 #    project_path 不用打；persona 一律取 --reviewer-w3 同人（验证的就是本人复现本人）
-/code-review benchmark --reviewer-w3 <工号> --pick <序号> --domain <地域>
+/code-review benchmark --reviewer-w3 <工号> --pick <序号>
 # 或按 mr_iid
-/code-review benchmark --reviewer-w3 <工号> --mr-iid <iid> --domain <地域>
+/code-review benchmark --reviewer-w3 <工号> --mr-iid <iid>
 # mr_iid 在多个项目重复时必须增加 --project-path <完整项目路径>
+# 仅旧 enriched 无 domain 或跨地域消歧时补 --domain <地域>
 ```
 
 `--reviewer-w3` = 谁的真实评审当 ground truth（候选 MR 池 + 真人评论来自此人 enriched）。
@@ -258,11 +260,12 @@ python <SKILL_ROOT>/scripts/benchmark/collect_benchmark_case.py \
 **Step 2 生成 benchmark case 输入**（确定性，脚本）
 ```bash
 python <SKILL_ROOT>/scripts/benchmark/collect_benchmark_case.py \
-  --reviewer-w3 <工号> --pick <序号> --domain <地域>
+  --reviewer-w3 <工号> --pick <序号>
 ```
 - project_path 从 enriched 自动取，**用户全程不打 project_path**。
 - 按 mr_iid 从 enriched 取真人评论（file/line/severity/comment/note_hash）。
 - 调 `get_mr_diff` 取 MR diff，复用普通 review 的 diff 装配管线。
+- domain 优先取 enriched；旧 enriched 会尝试从其 `link` 回填，仍无法取得时才要求显式参数。
 - 产物目录：`outputs/benchmark/{domain}/{project_path}/mr-{iid}/reviewer-{工号}/`。
 - 本步生成 `manifest.json`、`diff.json`、`diff.md`、`ground_truth.json`。
 - 当前 MR diff 中找不到位置的历史评论写入 `excluded_comments`，不参与指标；若
