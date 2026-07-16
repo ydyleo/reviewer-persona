@@ -30,7 +30,7 @@
 ```
 
 - **采集**：阿基米德 Excel 是评审意见的单一入口；CodeHub API 补 `file_path/line/severity` 和目标行代码上下文，产出 enriched JSONL。
-- **蒸馏**：模型读 enriched + 结构化 JSON，按 prompt + template 生成 persona `.md`，写入 `personas/`。
+- **蒸馏**：模型读 enriched + 结构化 JSON 生成草稿，脚本自动校验、保存一个 previous 并启用到 `personas/`。
 - **评审**：模型读 persona + commit diff，按格式契约生成报告。
 
 ## 核心命令
@@ -39,7 +39,7 @@
 /code-review distill          # 从历史评审数据生成 reviewer 人格分身
 /code-review review           # 用指定人格评审单个 commit
 /code-review list-personas    # 列出已有 persona
-/code-review refresh-persona  # 基于新时间范围刷新 persona（备份旧版后覆盖）
+/code-review refresh-persona  # 基于新时间范围刷新 persona（只保留一个 previous）
 /code-review benchmark        # persona 质量评估：AI 评审 vs 真人评论（人工比对召回/精度/风格）
 ```
 
@@ -62,8 +62,12 @@ cp .env.example .env
 /code-review review --commit <commit_id> --persona <工号>
 ```
 
-第 3 步产出 `personas/reviewer-{姓名}-{工号}.skill.md`；第 4 步把 diff、结构化评审和 Markdown 报告集中写入
+第 3 步自动产出并启用 `personas/reviewer-{姓名}-{工号}.skill.md`，无需手工复制；第 4 步把 diff、结构化评审和 Markdown 报告集中写入
 `outputs/review/{domain}/{project_path}/commit-{short_sha}/`。
+
+已有同工号 persona 时只保留最近一个旧版本：
+`outputs/generated_personas/backup/reviewer-{姓名}-{工号}.previous.skill.md`。如需只生成草稿供检查，
+给 distill 增加 `--draft-only`。
 
 更细的参数、每步脚本、报告格式契约见 `SKILL.md`。
 
@@ -122,7 +126,7 @@ prompts/      模型编排提示词
 references/   固定规则与评审报告格式契约
 templates/    persona 与评审报告模板
 personas/     最终 reviewer 人格（被 review 加载）
-outputs/      运行产物（distill 目录 + review/benchmark；diffs/reports 为旧产物）
+outputs/      运行产物（generated_personas 暂存/previous 备份 + review/benchmark；diffs/reports 为旧产物）
 cache/        缓存与登录态（mr_diffs/archimedes_session）
 legacy/       旧测试脚本，仅迁移参考，非运行依赖
 ```

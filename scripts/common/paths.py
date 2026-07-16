@@ -33,7 +33,7 @@ REVIEW_DIR = OUTPUTS_DIR / "review"
 MR_DIFFS_CACHE_DIR = CACHE_DIR / "mr_diffs"
 ARCHIMEDES_SESSION_DIR = CACHE_DIR / "archimedes_session"
 
-_GENERATED_PERSONAS_BACKUP_DIR = GENERATED_PERSONAS_DIR / "backup"
+PERSONA_BACKUP_DIR = GENERATED_PERSONAS_DIR / "backup"
 
 
 def ensure_dirs() -> None:
@@ -49,7 +49,7 @@ def ensure_dirs() -> None:
         DIFFS_DIR,
         PROFILES_DIR,
         GENERATED_PERSONAS_DIR,
-        _GENERATED_PERSONAS_BACKUP_DIR,
+        PERSONA_BACKUP_DIR,
         REPORTS_DIR,
         BENCHMARK_DIR,
         REVIEW_DIR,

@@ -22,6 +22,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from common.paths import STRUCTURED_DIR, ensure_dirs  # noqa: E402
+from common.artifacts import now_iso  # noqa: E402
 from common.jsonl_io import read_jsonl, CN_TO_EN  # noqa: E402
 from common.filters import is_noise_comment  # noqa: E402
 
@@ -283,6 +284,11 @@ def prepare(input_path: str, reviewer_w3: str = '', start: str = '', end: str = 
     start, end = start or 'unknown', end or 'unknown'
 
     data = build_structured_json(reviewer_name, reviewer_w3, records, input_path)
+    data['meta'].update({
+        'distill_start': start,
+        'distill_end': end,
+        'prepared_at': now_iso(),
+    })
 
     sev_str = ', '.join(f'{k}:{v}' for k, v in sorted(data['meta']['severity_distribution'].items()))
     print(f'  严重程度分布: {sev_str}')

@@ -11,7 +11,9 @@
 ## 输入材料
 
 1. **structured JSON**：由 `scripts/distill/prepare_review_data.py` 产出于 `outputs/structured/{reviewer_w3}_{start}_{end}_structured.json`。读取该文件作为本次蒸馏的数据源，含：
-   - `meta`：`reviewer_name` / `reviewer_w3` / `total_reviews` / `severity_distribution` / `unique_files` / `total_patterns`（persona 标题的姓名、工号从这里取）
+   - `meta`：`reviewer_name` / `reviewer_w3` / `distill_start` / `distill_end` /
+     `prepared_at` / `total_reviews` / `severity_distribution` / `unique_files` /
+     `total_patterns`（persona 标题与元信息只能从这里取）
    - `pattern_clusters`：预聚类模式（带 `count` / `category` / `review_ids`），按 count 降序——**规则提炼的主索引**
    - `file_distribution`：文件分布
    - `reviews`：全量 matched 评论，每条含 `comment` / `severity` / `file` / `line` / `target_code` / `context_lines` / `submitter`。体量可能较大，**按 `pattern_clusters` 的 `review_ids` 抽取每簇 2-3 条代表样本**作为规则样本，不要把全集塞进 persona。
@@ -44,14 +46,16 @@
 
 ### 5. 输出格式
 严格匹配 `templates/persona_skill_template.md` 骨架，不要额外解释，只输出成品 persona 内容。
+`Persona 元信息` 中的姓名、工号、蒸馏日期、评论数量和数据准备时间必须逐字取自
+structured `meta`，禁止推测或改写。
 persona 的「输出要求」段必须内嵌 `references/review-output-format.md` 的铁律格式块
 （`【{姓名}意见】` / `【评审来源】` / `【位置】` / 连贯段落 / `【修改示例】` / `---`，
 严重程度四档分组，禁止拆 `【问题根因】`/`【修改建议】` 等字段）。
 
 ## 输出路径
 
-生成草稿到 `outputs/generated_personas/reviewer-{姓名}-{工号}.skill.md`，
-人工确认后由 `refresh-persona` 或人工移动到 `personas/reviewer-{姓名}-{工号}.skill.md`。
+生成草稿到 `outputs/generated_personas/reviewer-{姓名}-{工号}.skill.md`。生成结束后不要直接
+改写 `personas/`；由 `scripts/distill/activate_persona.py` 校验、备份并原子启用。
 
 ## 数据读取
 

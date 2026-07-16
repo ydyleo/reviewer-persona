@@ -13,7 +13,7 @@ description: 华为 CodeHub 代码评审 skill。从历史评审数据蒸馏 rev
 /code-review distill        # 从历史评审数据生成 reviewer 人格分身
 /code-review review         # 用指定人格评审单个 commit
 /code-review list-personas  # 列出已有 persona
-/code-review refresh-persona  # 基于新时间范围刷新 persona（备份旧版后覆盖）
+/code-review refresh-persona  # 基于新时间范围刷新 persona（只保留一个 previous）
 /code-review benchmark      # persona 质量评估：AI 评审 vs 真人评论，位置/关切/风格对比
 ```
 
@@ -36,10 +36,12 @@ description: 华为 CodeHub 代码评审 skill。从历史评审数据蒸馏 rev
   --reviewer-w3 <工号> \
   --start <YYYY-MM-DD> \
   --end <YYYY-MM-DD> \
-  --domain <codehub-y|codehub-g|cr-y.codehub|open.codehub>
+  --domain <codehub-y|codehub-g|cr-y.codehub|open.codehub> \
+  [--draft-only]
 ```
 
 `--domain` 只用于后续 enrich 调 CodeHub API；export 阿基米德不需要 domain。
+默认在生成并校验后立即启用 persona；仅明确传 `--draft-only` 时保留草稿而不启用。
 
 ### 执行流程
 
@@ -70,7 +72,8 @@ python <SKILL_ROOT>/scripts/distill/enrich_reviews.py \
 python <SKILL_ROOT>/scripts/distill/prepare_review_data.py \
   --input <SKILL_ROOT>/outputs/enriched/<上面>.jsonl
 ```
-- 产物：`outputs/structured/{工号}_{起}_{止}_structured.json`（含 meta / reviews / pattern_clusters / file_distribution）
+- 产物：`outputs/structured/{工号}_{起}_{止}_structured.json`（meta 明确包含姓名、工号、
+  蒸馏起止时间、数据准备时间和评论数，另含 reviews / pattern_clusters / file_distribution）
 
 **Step 4 模型编排生成 persona（本步由当前模型完成）**
 
@@ -84,7 +87,23 @@ python <SKILL_ROOT>/scripts/distill/prepare_review_data.py \
 按 distill prompt 硬性要求生成，写入草稿：
 `outputs/generated_personas/reviewer-{姓名}-{工号}.skill.md`
 
-人工确认后，复制到正式目录：`personas/reviewer-{姓名}-{工号}.skill.md`。
+**Step 5 校验并自动启用 persona**（确定性，脚本）
+
+默认运行：
+```bash
+python <SKILL_ROOT>/scripts/distill/activate_persona.py \
+  --draft <SKILL_ROOT>/outputs/generated_personas/reviewer-<姓名>-<工号>.skill.md \
+  --structured <SKILL_ROOT>/outputs/structured/<本次 structured.json>
+```
+
+- 首次生成时直接安装为 `personas/reviewer-{姓名}-{工号}.skill.md`。
+- 同工号正式 persona 已存在时，先覆盖保存最近一个
+  `outputs/generated_personas/backup/reviewer-{姓名}-{工号}.previous.skill.md`，再原子安装新版。
+- 每个工号最多保留一个 previous，不累计时间戳历史。
+- 校验或安装失败时正式 persona 不变，草稿留在 `outputs/generated_personas/` 供排查。
+- 成功启用后草稿被移动到 `personas/`，用户无需手工复制。
+
+用户传 `--draft-only` 时，给上面脚本增加 `--draft-only`；只校验和保留草稿，不修改正式 persona。
 
 ---
 
@@ -186,11 +205,8 @@ python <SKILL_ROOT>/scripts/review/load_persona.py --list
 
 ### 执行流程
 
-1. 备份旧版正式 persona 到 `outputs/generated_personas/backup/reviewer-{姓名}-{工号}_<时间戳>.skill.md`（带时间戳，可回滚）。
-2. 重跑 distill 的 Step 1~4（同 `--reviewer-w3`，新 `--start/--end`）。
-3. 新版 persona 草稿经人工确认后覆盖 `personas/reviewer-{姓名}-{工号}.skill.md`。
-
-不要无备份直接覆盖正式 persona。
+重跑 distill 的 Step 1~5（同 `--reviewer-w3`，使用新 `--start/--end`）。不要预先删除或
+手工备份正式文件；统一由 `activate_persona.py` 在新草稿校验通过后保存一个 previous 并原子覆盖。
 
 ---
 
@@ -298,7 +314,7 @@ python <SKILL_ROOT>/scripts/benchmark/render_comparison.py \
   → CodeHub API 补 file_path/line/severity/context
   → enriched JSONL（matched-only）
   → structured JSON
-  → SKILL.md 编排模型生成 reviewer persona skill
+  → SKILL.md 编排模型生成草稿 → 自动校验/备份/启用 reviewer persona
   → 指定 persona 评审 commit
   → SKILL.md 编排模型生成 review report
   → benchmark：按 domain/project/MR 取真人评论 + MR diff → 复用 review 生成 AI JSON → 独立比较 → 人工确认
@@ -308,14 +324,14 @@ python <SKILL_ROOT>/scripts/benchmark/render_comparison.py \
 
 ```
 scripts/common/   公共能力（paths/config/codehub_client/diff_parser/context_builder/excel_io/jsonl_io/filters）
-scripts/distill/  生成人格链路（export_archimedes/enrich_reviews/prepare_review_data）
+scripts/distill/  生成人格链路（export/enrich/prepare/activate persona）
 scripts/review/   共用评审链路（diff / persona / review Markdown 渲染）
 scripts/benchmark/  benchmark 对照链路（case 收集 / comparison 渲染）
 prompts/          模型提示词（persona 蒸馏 / 共用评审 / benchmark 比较）
 references/       固定规则与契约（评审 JSON/Markdown、benchmark 比较、规则分类、基线）
 templates/        输出模板（persona_skill_template/review_report_template/benchmark_worksheet）
 personas/         最终 reviewer 人格
-outputs/          运行产物（distill 目录保持不变；新评审写 review/benchmark；diffs/reports 为旧产物）
+outputs/          运行产物（generated_personas 作暂存并保留单 previous；新评审写 review/benchmark）
 cache/            缓存与登录态（mr_diffs/archimedes_session）
 legacy/           旧测试脚本，仅迁移参考，非运行依赖
 ```
