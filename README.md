@@ -39,7 +39,6 @@
 /code-review distill          # 从历史评审数据生成 reviewer 人格分身
 /code-review review           # 用指定人格评审单个 commit
 /code-review list-personas    # 列出已有 persona
-/code-review refresh-persona  # 基于新时间范围刷新 persona（只保留一个 previous）
 /code-review benchmark        # persona 质量评估：AI 评审 vs 真人评论（人工比对召回/精度/风格）
 ```
 

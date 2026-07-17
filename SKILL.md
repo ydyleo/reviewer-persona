@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: 华为 CodeHub 代码评审 skill。从历史评审数据蒸馏 reviewer 人格分身，用指定人格评审 commit，并用未参与蒸馏的 MR 对比 AI 与真人评论的位置、问题关切和语言风格。用于 /code-review distill、review、list-personas、refresh-persona 和 benchmark。
+description: 华为 CodeHub 代码评审 skill。从历史评审数据蒸馏 reviewer 人格分身，用指定人格评审 commit，并用未参与蒸馏的 MR 对比 AI 与真人评论的位置、问题关切和语言风格。用于 /code-review distill、review、list-personas 和 benchmark；兼容旧 refresh-persona 命令并按 distill 执行。
 ---
 
 # code-review 调度入口
@@ -13,7 +13,6 @@ description: 华为 CodeHub 代码评审 skill。从历史评审数据蒸馏 rev
 /code-review distill        # 从历史评审数据生成 reviewer 人格分身
 /code-review review         # 用指定人格评审单个 commit
 /code-review list-personas  # 列出已有 persona
-/code-review refresh-persona  # 基于新时间范围刷新 persona（只保留一个 previous）
 /code-review benchmark      # persona 质量评估：AI 评审 vs 真人评论，位置/关切/风格对比
 ```
 
@@ -106,6 +105,12 @@ python <SKILL_ROOT>/scripts/distill/activate_persona.py \
 
 用户传 `--draft-only` 时，给上面脚本增加 `--draft-only`；只校验和保留草稿，不修改正式 persona。
 
+### 兼容旧命令
+
+收到 `/code-review refresh-persona` 时，提示该命令是兼容别名，建议后续改用
+`/code-review distill`；随后原样转交同一组参数并执行上面的 distill Step 1~5，不建立独立流程。
+更新已有 persona 时仍由 `activate_persona.py` 原子覆盖，并且每个工号只保留最近一个 previous。
+
 ---
 
 ## 命令二：/code-review review
@@ -189,29 +194,16 @@ python <SKILL_ROOT>/scripts/review/render_review.py \
 ## 命令三：/code-review list-personas
 
 ```bash
-python <SKILL_ROOT>/scripts/review/load_persona.py --list
+python <SKILL_ROOT>/scripts/review/load_persona.py --list --format json
 ```
-展示 姓名 / 工号 / 规则数 / 关注领域。
+- JSON 只输出到 stdout，不保存文件；读取 `personas` 数组后向用户展示分块列表，不直接转贴 JSON。
+- 每项展示姓名、工号、蒸馏范围、规则数、关注领域；不要使用依赖中文显示宽度的定宽表格。
+- persona Markdown 固定按 UTF-8 读取，CLI stdout/stderr 固定为 UTF-8；JSON 使用 ASCII-safe 转义，兼容 Windows CP936 调用环境。
+- 用户直接在终端阅读时可运行 `--list --format text`（`text` 也是默认格式）。
 
 ---
 
-## 命令四：/code-review refresh-persona
-
-### 参数
-
-```
-/code-review refresh-persona \
-  --reviewer-w3 <工号> --start <起> --end <止> [--domain <地域>]
-```
-
-### 执行流程
-
-重跑 distill 的 Step 1~5（同 `--reviewer-w3`，使用新 `--start/--end`）。不要预先删除或
-手工备份正式文件；统一由 `activate_persona.py` 在新草稿校验通过后保存一个 previous 并原子覆盖。
-
----
-
-## 命令五：/code-review benchmark
+## 命令四：/code-review benchmark
 
 评估 persona 蒸馏质量：拿该评审人**真实评审过的 MR**，让 persona 生成 AI 评审，
 与真人评论对照，人工确认五类结果并计算召回/精度/风格。

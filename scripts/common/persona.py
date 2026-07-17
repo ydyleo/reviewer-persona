@@ -44,7 +44,7 @@ def parse_persona(path: Path) -> dict:
     focus_match = re.search(
         r'##\s*核心评审偏好\s*\n\s*-?\s*重点关注领域[：:]\s*(.+)', text)
     if focus_match:
-        focus = focus_match.group(1).strip()[:60]
+        focus = focus_match.group(1).strip()
     return {
         'file': str(path), 'name': name, 'w3': w3,
         'rule_count': len(RULE_HEADING_RE.findall(text)),
