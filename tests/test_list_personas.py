@@ -13,6 +13,7 @@ from review.load_persona import (  # noqa: E402
     list_personas,
     render_personas_json,
     render_personas_text,
+    summarize_focus,
 )
 
 
@@ -50,9 +51,9 @@ class ListPersonasTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             _persona(Path(temp) / 'reviewer-刘嘉悦-l00604762.skill.md')
             output = render_personas_text(list_personas(Path(temp)))
-        self.assertIn('- 刘嘉悦（l00604762）', output)
-        self.assertIn('蒸馏范围：2026-01-01 ~ 2026-06-30', output)
-        self.assertIn('规则数：2', output)
+        self.assertIn('已安装 1 个 reviewer persona', output)
+        self.assertIn('1. 刘嘉悦（l00604762）', output)
+        self.assertIn('2 条规则 · 2026-01-01 ~ 2026-06-30', output)
         self.assertNotIn('姓名        工号', output)
 
     def test_focus_is_not_truncated_for_the_old_fixed_width_table(self):
@@ -61,9 +62,31 @@ class ListPersonasTest(unittest.TestCase):
             _persona(
                 Path(temp) / 'reviewer-刘嘉悦-l00604762.skill.md', long_focus)
             personas = list_personas(Path(temp))
-        self.assertIn(long_focus, render_personas_text(personas))
+        self.assertNotIn(long_focus, render_personas_text(personas))
+        self.assertIn('…', render_personas_text(personas))
+        self.assertIn(long_focus, render_personas_text(personas, verbose=True))
         payload = json.loads(render_personas_json(personas))
         self.assertEqual(payload['personas'][0]['focus'], long_focus)
+
+    def test_focus_summary_ignores_commas_inside_parentheses(self):
+        focus = (
+            '错误码检查（BaseError, JsonError）、接口设计与参数映射、并发安全、'
+            '代码复用、测试质量、日志职责')
+        self.assertEqual(
+            summarize_focus(focus),
+            '错误码检查、接口设计与参数映射、并发安全、代码复用、测试质量等')
+
+    def test_verbose_keeps_full_focus_while_default_uses_summary(self):
+        focus = '错误码检查、接口设计、并发安全、代码复用、测试质量、日志职责'
+        persona = {
+            'name': '杨立博', 'w3': 'y00896687', 'rule_count': 14,
+            'focus': focus, 'metadata': {}, 'file': 'persona.md',
+        }
+        compact = render_personas_text([persona])
+        verbose = render_personas_text([persona], verbose=True)
+        self.assertIn('关注：错误码检查、接口设计、并发安全、代码复用、测试质量等', compact)
+        self.assertNotIn('日志职责', compact)
+        self.assertIn(f'关注：{focus}', verbose)
 
     def test_json_is_ascii_safe_and_round_trips_chinese(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -71,8 +94,9 @@ class ListPersonasTest(unittest.TestCase):
             output = render_personas_json(list_personas(Path(temp)))
         output.encode('ascii')
         payload = json.loads(output)
-        self.assertEqual(payload['schema_version'], '1.0')
+        self.assertEqual(payload['schema_version'], '1.1')
         self.assertEqual(payload['personas'][0]['name'], '刘嘉悦')
+        self.assertEqual(payload['personas'][0]['focus_summary'], '配置完整性与命名一致性')
         self.assertEqual(payload['personas'][0]['focus'], '配置完整性与命名一致性')
 
     def test_cli_overrides_cp936_stdout_with_utf8(self):

@@ -193,13 +193,19 @@ python <SKILL_ROOT>/scripts/review/render_review.py \
 
 ## 命令三：/code-review list-personas
 
+```
+/code-review list-personas [--verbose]
+```
+
 ```bash
 python <SKILL_ROOT>/scripts/review/load_persona.py --list --format json
 ```
 - JSON 只输出到 stdout，不保存文件；读取 `personas` 数组后向用户展示分块列表，不直接转贴 JSON。
-- 每项展示姓名、工号、蒸馏范围、规则数、关注领域；不要使用依赖中文显示宽度的定宽表格。
+- 默认直接从“已安装 N 个 reviewer persona”开始，每项固定三行：序号+姓名+工号、规则数+蒸馏范围、`focus_summary`；
+  不要输出“JSON 已拿到”“编码正常”等内部过程，不要添加 `---`，不要使用定宽表格。
+- 用户传 `--verbose` 时保持相同结构，但用完整 `focus` 替换 `focus_summary`。
 - persona Markdown 固定按 UTF-8 读取，CLI stdout/stderr 固定为 UTF-8；JSON 使用 ASCII-safe 转义，兼容 Windows CP936 调用环境。
-- 用户直接在终端阅读时可运行 `--list --format text`（`text` 也是默认格式）。
+- 用户直接在终端阅读时可运行 `--list --format text [--verbose]`（`text` 是默认格式）。
 
 ---
 
