@@ -30,7 +30,7 @@ def parse_diff_to_lines(diff_text: str) -> dict:
             line_map[new_line_num] = line[1:]
             new_line_num += 1
         elif line.startswith('-') and not line.startswith('---'):
-            pass
+            continue
         elif line.startswith(' '):
             line_map[new_line_num] = line[1:]
             new_line_num += 1

@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
 from common.paths import BENCHMARK_DIR, REVIEW_DIR
+from common.executables import executable_path
 
 _ROUTE_PARTS = {'merge_requests', 'commits', 'tree', 'blob'}
 _SAFE_SEGMENT_RE = re.compile(r'[^A-Za-z0-9._\-\u4e00-\u9fff]+')
@@ -82,16 +83,18 @@ def repository_identity(repo: str) -> dict:
     """优先从 origin 推导仓库身份；无 origin 时使用 local/{目录名-短哈希}。"""
     resolved = Path(repo).resolve()
     result = subprocess.run(
-        ['git', '-C', str(resolved), 'remote', 'get-url', 'origin'],
+        [executable_path('git'), '-C', str(resolved),
+         'remote', 'get-url', 'origin'],
         capture_output=True, text=True, encoding='utf-8', errors='replace',
     )
     if result.returncode == 0 and result.stdout.strip():
         try:
             identity = parse_repository_url(result.stdout.strip())
+        except ValueError:
+            identity = None
+        if identity is not None:
             identity['local_path'] = str(resolved)
             return identity
-        except ValueError:
-            pass
 
     suffix = hashlib.sha256(str(resolved).encode('utf-8')).hexdigest()[:8]
     repo_name = f'{_safe_segment(resolved.name or "repository")}-{suffix}'

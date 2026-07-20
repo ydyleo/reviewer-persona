@@ -8,7 +8,9 @@ from unittest.mock import patch
 SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS))
 
-from benchmark.collect_benchmark_pairs import _resolve, collect_case  # noqa: E402
+from benchmark.collect_benchmark_pairs import (  # noqa: E402
+    _legacy_link_domain, _resolve, collect_case,
+)
 
 
 class BenchmarkResolveTest(unittest.TestCase):
@@ -42,6 +44,14 @@ class BenchmarkResolveTest(unittest.TestCase):
         (domain, _project, _iid), _ = _resolve(
             'z1', mr_iid=6, domain='codehub-y')
         self.assertEqual(domain, 'codehub-y')
+
+    def test_legacy_link_domain_has_explicit_empty_fallback(self):
+        self.assertEqual(_legacy_link_domain('not-a-url'), '')
+        self.assertEqual(
+            _legacy_link_domain(
+                'https://codehub-g.huawei.com/team/service/'
+                'merge_requests/6#note_example'),
+            'codehub-g')
 
     @patch('benchmark.collect_benchmark_pairs._persona_metadata')
     @patch('benchmark.collect_benchmark_pairs.benchmark_case_dir')

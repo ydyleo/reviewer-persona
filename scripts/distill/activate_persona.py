@@ -149,7 +149,7 @@ def main() -> None:
     try:
         result = activate_persona(
             Path(args.draft), Path(args.structured), draft_only=args.draft_only)
-    except (ValueError, OSError, json.JSONDecodeError) as error:
+    except (ValueError, OSError) as error:
         print(str(error), file=sys.stderr)
         print(f'正式 persona 未修改；草稿保留：{args.draft}', file=sys.stderr)
         raise SystemExit(1)

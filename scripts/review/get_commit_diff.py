@@ -32,6 +32,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from common.artifacts import now_iso, write_json  # noqa: E402
+from common.executables import executable_path  # noqa: E402
 from common.output_layout import review_case_dir, repository_identity  # noqa: E402
 from common.paths import DIFFS_DIR, ensure_dirs  # noqa: E402
 
@@ -50,7 +51,7 @@ _EXT_LANG = {
 
 def _git(repo: str, *args, check: bool = True) -> str:
     result = subprocess.run(
-        ['git', '-C', repo, *args],
+        [executable_path('git'), '-C', repo, *args],
         capture_output=True, text=True, encoding='utf-8', errors='replace',
     )
     if check and result.returncode != 0:
@@ -60,14 +61,16 @@ def _git(repo: str, *args, check: bool = True) -> str:
 
 def _is_git_repo(repo: str) -> bool:
     return subprocess.run(
-        ['git', '-C', repo, 'rev-parse', '--is-inside-work-tree'],
+        [executable_path('git'), '-C', repo,
+         'rev-parse', '--is-inside-work-tree'],
         capture_output=True, text=True,
     ).returncode == 0
 
 
 def validate_commit(repo: str, commit: str) -> bool:
     return subprocess.run(
-        ['git', '-C', repo, 'cat-file', '-e', f'{commit}^{{commit}}'],
+        [executable_path('git'), '-C', repo,
+         'cat-file', '-e', f'{commit}^{{commit}}'],
         capture_output=True,
     ).returncode == 0
 

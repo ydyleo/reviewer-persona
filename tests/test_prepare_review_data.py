@@ -8,10 +8,27 @@ from unittest.mock import patch
 SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPTS))
 
-from distill.prepare_review_data import prepare  # noqa: E402
+from distill.prepare_review_data import (  # noqa: E402
+    PATTERN_RULES, PatternRule, classify_review, prepare,
+)
 
 
 class PrepareReviewDataTest(unittest.TestCase):
+    def test_pattern_rules_are_named_and_keep_all_legacy_fields(self):
+        self.assertTrue(PATTERN_RULES)
+        self.assertTrue(all(isinstance(rule, PatternRule)
+                            for rule in PATTERN_RULES))
+        first = PATTERN_RULES[0]
+        self.assertEqual(first.label, 'const/auto&缺失')
+        self.assertTrue(first.code_keywords)
+        self.assertTrue(first.description)
+
+    def test_named_rule_access_keeps_comment_and_code_classification(self):
+        comment_matches = classify_review('', '这里的返回值没有检查', '')
+        self.assertIn(('错误码/返回值未检查', 'B'), comment_matches)
+        code_matches = classify_review('std::unique_ptr<Item> value;', '', '')
+        self.assertIn(('智能指针使用', 'P'), code_matches)
+
     @patch('distill.prepare_review_data.ensure_dirs')
     @patch('distill.prepare_review_data._load_records')
     def test_structured_meta_contains_distill_period(self, load_records, _ensure):

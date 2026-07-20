@@ -18,11 +18,11 @@ from review.load_persona import (  # noqa: E402
 
 
 def _persona(path: Path, focus='配置完整性与命名一致性') -> Path:
-    path.write_text(f'''# 评审人格分身：【刘嘉悦 l00604762】
+    path.write_text(f'''# 评审人格分身：【测试用户 t00000001】
 
 ## Persona 元信息
-- reviewer：刘嘉悦
-- reviewer_w3：l00604762
+- reviewer：测试用户
+- reviewer_w3：t00000001
 - 蒸馏开始日期：2026-01-01
 - 蒸馏结束日期：2026-06-30
 - 历史评论数量：12
@@ -40,19 +40,19 @@ def _persona(path: Path, focus='配置完整性与命名一致性') -> Path:
 class ListPersonasTest(unittest.TestCase):
     def test_list_reads_utf8_persona_and_returns_metadata(self):
         with tempfile.TemporaryDirectory() as temp:
-            _persona(Path(temp) / 'reviewer-刘嘉悦-l00604762.skill.md')
+            _persona(Path(temp) / 'reviewer-测试用户-t00000001.skill.md')
             personas = list_personas(Path(temp))
         self.assertEqual(len(personas), 1)
-        self.assertEqual(personas[0]['name'], '刘嘉悦')
+        self.assertEqual(personas[0]['name'], '测试用户')
         self.assertEqual(personas[0]['rule_count'], 2)
         self.assertEqual(personas[0]['metadata']['distill_start'], '2026-01-01')
 
     def test_text_uses_blocks_instead_of_fixed_width_table(self):
         with tempfile.TemporaryDirectory() as temp:
-            _persona(Path(temp) / 'reviewer-刘嘉悦-l00604762.skill.md')
+            _persona(Path(temp) / 'reviewer-测试用户-t00000001.skill.md')
             output = render_personas_text(list_personas(Path(temp)))
         self.assertIn('已安装 1 个 reviewer persona', output)
-        self.assertIn('1. 刘嘉悦（l00604762）', output)
+        self.assertIn('1. 测试用户（t00000001）', output)
         self.assertIn('2 条规则 · 2026-01-01 ~ 2026-06-30', output)
         self.assertNotIn('姓名        工号', output)
 
@@ -60,7 +60,7 @@ class ListPersonasTest(unittest.TestCase):
         long_focus = '配置完整性与命名一致性' * 10
         with tempfile.TemporaryDirectory() as temp:
             _persona(
-                Path(temp) / 'reviewer-刘嘉悦-l00604762.skill.md', long_focus)
+                Path(temp) / 'reviewer-测试用户-t00000001.skill.md', long_focus)
             personas = list_personas(Path(temp))
         self.assertNotIn(long_focus, render_personas_text(personas))
         self.assertIn('…', render_personas_text(personas))
@@ -79,7 +79,7 @@ class ListPersonasTest(unittest.TestCase):
     def test_verbose_keeps_full_focus_while_default_uses_summary(self):
         focus = '错误码检查、接口设计、并发安全、代码复用、测试质量、日志职责'
         persona = {
-            'name': '杨立博', 'w3': 'y00896687', 'rule_count': 14,
+            'name': '示例用户', 'w3': 't00000002', 'rule_count': 14,
             'focus': focus, 'metadata': {}, 'file': 'persona.md',
         }
         compact = render_personas_text([persona])
@@ -90,12 +90,12 @@ class ListPersonasTest(unittest.TestCase):
 
     def test_json_is_ascii_safe_and_round_trips_chinese(self):
         with tempfile.TemporaryDirectory() as temp:
-            _persona(Path(temp) / 'reviewer-刘嘉悦-l00604762.skill.md')
+            _persona(Path(temp) / 'reviewer-测试用户-t00000001.skill.md')
             output = render_personas_json(list_personas(Path(temp)))
         output.encode('ascii')
         payload = json.loads(output)
         self.assertEqual(payload['schema_version'], '1.1')
-        self.assertEqual(payload['personas'][0]['name'], '刘嘉悦')
+        self.assertEqual(payload['personas'][0]['name'], '测试用户')
         self.assertEqual(payload['personas'][0]['focus_summary'], '配置完整性与命名一致性')
         self.assertEqual(payload['personas'][0]['focus'], '配置完整性与命名一致性')
 

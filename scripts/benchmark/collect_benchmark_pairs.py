@@ -39,6 +39,14 @@ from common.codehub_url import (  # noqa: E402
 from review.load_persona import find_persona  # noqa: E402
 
 
+def _legacy_link_domain(link: str) -> str:
+    """旧 enriched 尽力从链接补 domain；无法解析时保留为空。"""
+    try:
+        return parse_review_url(link)['domain']
+    except ValueError:
+        return ''
+
+
 def _load_reviewer_records(reviewer_w3: str) -> list:
     """读 enriched 并按评论身份去重，避免重叠时间范围重复计数。"""
     records, seen = [], set()
@@ -48,11 +56,8 @@ def _load_reviewer_records(reviewer_w3: str) -> list:
         for r in read_jsonl(str(p)):
             if str(r.get('reviewer_w3', '')) == reviewer_w3:
                 if not r.get('domain') and r.get('link'):
-                    try:
-                        r = dict(r)
-                        r['domain'] = parse_review_url(r['link'])['domain']
-                    except ValueError:
-                        pass
+                    r = dict(r)
+                    r['domain'] = _legacy_link_domain(r['link'])
                 key = (
                     r.get('domain', ''), r.get('project_path', ''),
                     str(r.get('mr_iid', '')),

@@ -25,7 +25,11 @@ from common.paths import RAW_ARCHIMEDES_DIR, ARCHIMEDES_SESSION_DIR, ensure_dirs
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError  # noqa: E402
+from playwright.sync_api import (  # noqa: E402
+    Error as PlaywrightError,
+    TimeoutError as PlaywrightTimeoutError,
+    sync_playwright,
+)
 
 try:
     import pandas as pd
@@ -54,6 +58,32 @@ def parse_filename(content_disposition: str, default_name: str) -> str:
 LOGIN_TIMEOUT = 300  # 等待用户登录的超时秒数（5 分钟）
 
 
+def _try_open_target_after_login(page, target_url: str) -> None:
+    """登录轮询期间尽力回到目标页；页面跳转瞬时失败时由下一轮重试。"""
+    if not target_url or page.url == target_url:
+        return
+    current_url = page.url.lower()
+    if 'login' in current_url or 'passport' in current_url:
+        return
+    try:
+        page.goto(target_url, wait_until='domcontentloaded', timeout=30_000)
+        page.wait_for_timeout(2000)
+    except PlaywrightError:
+        return
+
+
+def _try_save_login_state(page, auth_path: Path) -> bool:
+    """检测导出按钮并保存登录态；瞬时 DOM/页面错误返回 False。"""
+    try:
+        button = page.get_by_text('导出数据', exact=False)
+        if button.count() <= 0 or not button.first.is_visible():
+            return False
+        page.context.storage_state(path=str(auth_path))
+        return True
+    except PlaywrightError:
+        return False
+
+
 def wait_for_login(page, auth_path: Path, target_url: str,
                    timeout_seconds: int = LOGIN_TIMEOUT):
     """等待用户完成登录并跳转到目标页面。
@@ -67,31 +97,10 @@ def wait_for_login(page, auth_path: Path, target_url: str,
           f"（超时 {timeout_seconds} 秒）...")
     start = time.time()
     while time.time() - start < timeout_seconds:
-        # 1. 主动跳转到目标页面（处理登录后停在首页的情况）
-        try:
-            if target_url and page.url != target_url:
-                # 如果还在登录页就不跳，让用户继续登录
-                cur = page.url.lower()
-                if "login" not in cur and "passport" not in cur:
-                    page.goto(target_url, wait_until="domcontentloaded",
-                              timeout=30_000)
-                    page.wait_for_timeout(2000)
-        except Exception:
-            pass
-
-        # 2. 检测「导出数据」按钮
-        try:
-            btn = page.get_by_text("导出数据", exact=False)
-            if btn.count() > 0:
-                try:
-                    if btn.first.is_visible():
-                        page.context.storage_state(path=str(auth_path))
-                        print(f"检测到登录成功，登录状态已保存到 {auth_path}")
-                        return
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        _try_open_target_after_login(page, target_url)
+        if _try_save_login_state(page, auth_path):
+            print(f"检测到登录成功，登录状态已保存到 {auth_path}")
+            return
         time.sleep(2)
     raise RuntimeError(
         f"登录超时（{timeout_seconds} 秒）。请在浏览器中完成登录后重新运行本脚本。")
